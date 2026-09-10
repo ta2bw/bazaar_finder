@@ -1,0 +1,6 @@
+{
+  "name": "Bazaar Finder",
+  "description": "Android app to find the closest bazaar open today to your device location, with operating hours, groceries/textiles/food features, parking facilities, user reviews, and Google Maps navigation.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
