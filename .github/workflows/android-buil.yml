@@ -3,23 +3,21 @@ name: Build Android APK
 on:
   push:
     branches:
-      - main  # Change to your default branch
+      - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
+    - name: Checkout code
+      uses: actions/checkout@v2
 
-      - name: Set up JDK
-        uses: actions/setup-java@v1
-        with:
-          java-version: '11'  # Specify your Java version
+    - name: Set up JDK
+      uses: actions/setup-java@v2
+      with:
+        java-version: '17'
+        distribution: 'zulu'
 
-      - name: Make Gradle executable
-        run: chmod +x ./gradlew
-
-      - name: Build Release APK
-        run: ./gradlew assembleRelease
+    - name: Build with Gradle
+      run: ./gradlew assembleDebug
