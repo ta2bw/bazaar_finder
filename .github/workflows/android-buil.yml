@@ -22,4 +22,4 @@ jobs:
 
       - name: Build APK
         run: |
-          ./gradlew assembleDebug  # Replace with your build command
+          gradlew assembleDebug
