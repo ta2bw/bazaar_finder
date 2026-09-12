@@ -1,20 +1,25 @@
-name: Java CI
+name: Build Android APK
 
-on: [push]
+on:
+  push:
+    branches:
+      - main
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
+    container:
+      image: menny/android
 
     steps:
-    - uses: actions/checkout@v2
-    - name: Set up JDK
-      uses: actions/setup-java@v1
-      with:
-        java-version: 11
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-    - name: Change wrapper permissions
-      run: chmod +x ./gradlew
-    - name: Build with Gradle
-      run: ./gradlew build
+      - name: Set up JDK
+        run: |
+          echo "Setting up JDK"
+          # Additional setup commands if necessary
+
+      - name: Build APK
+        run: |
+          ./gradlew assembleDebug  # Replace with your build command
