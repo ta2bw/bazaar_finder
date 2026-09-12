@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ea580c"/>
+      <stop offset="100%" stop-color="#c2410c"/>
+    </linearGradient>
+    <linearGradient id="awningGrad1" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f1f5f9"/>
+    </linearGradient>
+    <linearGradient id="awningGrad2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#ea580c"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- Background rounded squircle with safe-zone margin for maskable icon -->
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+
+  <!-- Inner Bazaar Tent / Awning Illustration -->
+  <g filter="url(#shadow)" transform="translate(40, 36)">
+    <!-- Awning stripes -->
+    <path d="M 46 170 L 108 170 L 98 90 L 56 90 Z" fill="url(#awningGrad1)" />
+    <path d="M 108 170 L 170 170 L 160 90 L 98 90 Z" fill="url(#awningGrad2)" />
+    <path d="M 170 170 L 232 170 L 222 90 L 160 90 Z" fill="url(#awningGrad1)" />
+    <path d="M 232 170 L 294 170 L 284 90 L 222 90 Z" fill="url(#awningGrad2)" />
+    <path d="M 294 170 L 356 170 L 346 90 L 284 90 Z" fill="url(#awningGrad1)" />
+    <path d="M 356 170 L 396 170 L 386 90 L 346 90 Z" fill="url(#awningGrad2)" />
+
+    <!-- Scalloped Awning valence -->
+    <path d="M 46 170 Q 77 200 108 170 Q 139 200 170 170 Q 201 200 232 170 Q 263 200 294 170 Q 325 200 356 170 Q 376 200 396 170 L 396 155 L 46 155 Z" fill="#ea580c" />
+    
+    <!-- Bazaar Stand base -->
+    <rect x="66" y="180" width="300" height="150" rx="20" fill="#0f172a" opacity="0.92" />
+    
+    <!-- Stall Produce & Goods (fruits, veggies, textiles) -->
+    <circle cx="120" cy="240" r="22" fill="#ef4444" />
+    <circle cx="155" cy="235" r="20" fill="#f59e0b" />
+    <circle cx="190" cy="242" r="21" fill="#10b981" />
+    <circle cx="230" cy="238" r="22" fill="#8b5cf6" />
+    <circle cx="270" cy="240" r="20" fill="#3b82f6" />
+    <circle cx="305" cy="236" r="18" fill="#f97316" />
+
+    <!-- Big Center Location Pin -->
+    <g transform="translate(166, 120)">
+      <path d="M 50 0 C 22.4 0 0 22.4 0 50 C 0 85 50 140 50 140 C 50 140 100 85 100 50 C 100 22.4 77.6 0 50 0 Z" fill="#ffffff" filter="url(#shadow)" />
+      <circle cx="50" cy="50" r="22" fill="#ea580c" />
+      <circle cx="50" cy="50" r="10" fill="#ffffff" />
+    </g>
+  </g>
+</svg>

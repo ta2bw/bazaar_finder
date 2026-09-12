@@ -1,6 +1,6 @@
 {
   "name": "Bazaar Finder",
-  "description": "Android app to find the closest bazaar open today to your device location, with operating hours, groceries/textiles/food features, parking facilities, user reviews, and Google Maps navigation.",
+  "description": "Türkiye genelindeki tüm semt pazarlarını hal.gov.tr resmi verileriyle çevrimdışı bulun. Kuruluş günleri, il/ilçe filtreleri, isteğe bağlı güncelleme ve onay kutulu alışveriş yapılacaklar listesi.",
   "requestFramePermissions": ["geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

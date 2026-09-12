@@ -1,513 +1,568 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Compass,
-  MapPin,
-  Sparkles,
-  Navigation,
+  Store,
+  Calendar,
   Search,
-  Filter,
-  Star,
-  Clock,
-  Car,
+  RefreshCw,
   ShoppingBag,
-  Shirt,
-  Utensils,
-  Layers,
-  Map as MapIcon,
   ListFilter,
   CheckCircle2,
+  WifiOff,
+  SlidersHorizontal,
+  X,
+  Info,
 } from 'lucide-react';
 import { AndroidFrame } from './components/AndroidFrame';
-import { AndroidHeader } from './components/AndroidHeader';
-import { ClosestBazaarHero } from './components/ClosestBazaarHero';
 import { BazaarCard } from './components/BazaarCard';
 import { BazaarDetailModal } from './components/BazaarDetailModal';
-import { AddReviewModal } from './components/AddReviewModal';
-import { LocationPickerModal } from './components/LocationPickerModal';
-import { InteractiveMap } from './components/InteractiveMap';
-import { INITIAL_BAZAARS } from './data/bazaars';
-import { LOCATION_PRESETS } from './data/locations';
-import {
-  Bazaar,
-  BazaarWithComputedDistance,
-  UserLocation,
-  Review,
-} from './types';
-import {
-  enrichBazaarWithDistance,
-  DAY_NAMES,
-} from './utils/geo';
+import { ShoppingTodoList } from './components/ShoppingTodoList';
+import { PWAInstallButton } from './components/PWAInstallButton';
+import { OFFLINE_BAZAARS, DAY_NAMES, getBazaarDayNames } from './data/bazaars';
+import { TURKEY_PROVINCES } from './data/provinces';
+import { BazaarItem } from './types';
 
-const REVIEWS_STORAGE_KEY = 'bazaar_finder_custom_reviews_v1';
+const OFFLINE_CACHE_KEY = 'bazaar_offline_data_v2';
+const SELECTED_PLATE_KEY = 'bazaar_selected_plate_v2';
 
 export default function App() {
-  // User location state
-  const [userLocation, setUserLocation] = useState<UserLocation>(
-    LOCATION_PRESETS[0]
-  );
-  const [isLocating, setIsLocating] = useState<boolean>(false);
-  const [locationError, setLocationError] = useState<string | null>(null);
-  const [isLocationPickerOpen, setIsLocationPickerOpen] = useState<boolean>(false);
+  // Current active tab: 'bazaars' or 'shopping'
+  const [activeTab, setActiveTab] = useState<'bazaars' | 'shopping'>('bazaars');
 
-  // Date selection (Defaults to current local date)
-  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
-
-  // Active view tab ('list' | 'map')
-  const [activeTab, setActiveTab] = useState<'list' | 'map'>('list');
-
-  // Filter & Search
-  const [activeFilter, setActiveFilter] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
-
-  // Modals
-  const [detailBazaar, setDetailBazaar] = useState<BazaarWithComputedDistance | null>(null);
-  const [reviewBazaar, setReviewBazaar] = useState<BazaarWithComputedDistance | null>(null);
-
-  // Toast message
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  // Bazaars base data with local reviews integration
-  const [bazaarsData, setBazaarsData] = useState<Bazaar[]>(() => {
+  // Selected province plate (Default: 6 = Ankara)
+  const [selectedPlate, setSelectedPlate] = useState<number>(() => {
     try {
-      const saved = localStorage.getItem(REVIEWS_STORAGE_KEY);
+      const saved = localStorage.getItem(SELECTED_PLATE_KEY);
       if (saved) {
-        const extraReviews: Record<string, Review[]> = JSON.parse(saved);
-        return INITIAL_BAZAARS.map((b) => {
-          const added = extraReviews[b.id] || [];
-          if (added.length === 0) return b;
-          const allReviews = [...added, ...b.reviews];
-          const avg =
-            allReviews.reduce((sum, r) => sum + r.rating, 0) / allReviews.length;
-          return {
-            ...b,
-            reviews: allReviews,
-            rating: Math.round(avg * 10) / 10,
-            reviewCount: allReviews.length,
-          };
-        });
+        const val = parseInt(saved, 10);
+        if (val >= 1 && val <= 81) return val;
       }
     } catch {
       // fallback
     }
-    return INITIAL_BAZAARS;
+    return 6; // Default to Ankara
   });
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
+  // Selected district filter
+  const [selectedDistrict, setSelectedDistrict] = useState<string>('all');
+
+  // Selected day filter ('today', 'all', or day index 0..6)
+  const [selectedDayFilter, setSelectedDayFilter] = useState<string>('today');
+
+  // Selected market type filter ('all', 'Semt Pazarı', 'Üretici Pazarı')
+  const [selectedType, setSelectedType] = useState<string>('all');
+
+  // Search query
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Selected bazaar for detail modal
+  const [selectedBazaar, setSelectedBazaar] = useState<BazaarItem | null>(null);
+
+  // Optional live update loading state & message
+  const [isUpdating, setIsUpdating] = useState<boolean>(false);
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
+
+  // Offline dataset with user local updates merged
+  const [allBazaars, setAllBazaars] = useState<BazaarItem[]>(() => {
+    try {
+      const localUpdates = localStorage.getItem(OFFLINE_CACHE_KEY);
+      if (localUpdates) {
+        const customMap: Record<string, BazaarItem[]> = JSON.parse(localUpdates);
+        // Merge customMap with bundled OFFLINE_BAZAARS
+        const merged = [...OFFLINE_BAZAARS];
+        for (const [plateStr, bazaars] of Object.entries(customMap)) {
+          const plate = Number(plateStr);
+          const filtered = merged.filter((b) => b.plate !== plate);
+          filtered.push(...bazaars);
+          return filtered;
+        }
+      }
+    } catch (e) {
+      console.error('Error loading cached bazaars:', e);
+    }
+    return OFFLINE_BAZAARS;
+  });
+
+  // Current system day index (0 = Sunday, 1 = Monday, ...)
+  const todayIndex = new Date().getDay();
+  const todayName = DAY_NAMES[todayIndex];
+
+  // Remember selected province
+  useEffect(() => {
+    try {
+      localStorage.setItem(SELECTED_PLATE_KEY, selectedPlate.toString());
+    } catch {
+      // fallback
+    }
+    setSelectedDistrict('all'); // Reset district when city changes
+  }, [selectedPlate]);
+
+  // Toast auto dismiss
+  const showToast = (text: string, type: 'success' | 'info' | 'error' = 'info') => {
+    setToastMessage({ text, type });
     setTimeout(() => {
       setToastMessage(null);
-    }, 3200);
+    }, 3800);
   };
 
-  // Attempt real device GPS on initial mount if available
-  const requestDeviceGps = (showToastNotice = true) => {
-    if (!navigator.geolocation) {
-      setLocationError('Geolocation is not supported by your browser');
-      return;
-    }
+  // Optional manual sync / update with hal.gov.tr
+  const handleOptionalUpdate = async () => {
+    setIsUpdating(true);
+    const provinceObj = TURKEY_PROVINCES.find((p) => p.plate === selectedPlate);
+    const cityName = provinceObj ? provinceObj.displayName : `İl (Plaka: ${selectedPlate})`;
 
-    setIsLocating(true);
-    setLocationError(null);
-
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setIsLocating(false);
-        const newLoc: UserLocation = {
-          name: 'Device Current Location',
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-          isSimulated: false,
-        };
-        setUserLocation(newLoc);
-        if (showToastNotice) {
-          showToast('Updated location to device GPS coordinates');
-        }
-      },
-      (err) => {
-        setIsLocating(false);
-        setLocationError(
-          err.code === 1
-            ? 'GPS permission denied. Using selected district.'
-            : 'Unable to acquire accurate GPS fix. Using selected district.'
-        );
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 60000,
-      }
-    );
-  };
-
-  useEffect(() => {
-    // Attempt device GPS on mount silently; falls back to preset if not allowed
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setUserLocation({
-            name: 'Device Current Location',
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-            accuracy: pos.coords.accuracy,
-            isSimulated: false,
-          });
-        },
-        () => {
-          // silently keep Kadıköy preset
-        },
-        { enableHighAccuracy: false, timeout: 4000 }
-      );
-    }
-  }, []);
-
-  // Compute distances and open states for all bazaars from current location & date
-  const enrichedBazaars = useMemo(() => {
-    return bazaarsData.map((b) =>
-      enrichBazaarWithDistance(b, userLocation.lat, userLocation.lng, selectedDate)
-    );
-  }, [bazaarsData, userLocation, selectedDate]);
-
-  // Deep-linking: Automatically open shared bazaar from URL query parameter '?bazaar=<id>'
-  useEffect(() => {
     try {
-      const params = new URLSearchParams(window.location.search);
-      const bazaarParam = params.get('bazaar');
-      if (bazaarParam && enrichedBazaars.length > 0) {
-        const found = enrichedBazaars.find(
-          (b) => b.id.toLowerCase() === bazaarParam.toLowerCase()
-        );
-        if (found) {
-          setDetailBazaar(found);
-        }
+      showToast(`${cityName} için hal.gov.tr'den güncel veriler sorgulanıyor...`, 'info');
+      const response = await fetch(`/api/bazaars?sid=${selectedPlate}&refresh=true`);
+      
+      if (!response.ok) {
+        throw new Error('Bağlantı kurulamadı');
       }
-    } catch {
-      // ignore
-    }
-  }, [enrichedBazaars]);
 
-  // Synchronize URL with active bazaar detail view for seamless link sharing
-  useEffect(() => {
-    try {
-      const url = new URL(window.location.href);
-      if (detailBazaar) {
-        url.searchParams.set('bazaar', detailBazaar.id);
+      const data = await response.json();
+      if (data.success && Array.isArray(data.bazaars) && data.bazaars.length > 0) {
+        // Save to state and localStorage
+        setAllBazaars((prev) => {
+          const others = prev.filter((b) => b.plate !== selectedPlate);
+          const next = [...others, ...data.bazaars];
+          return next;
+        });
+
+        // Store update locally
+        try {
+          const localUpdatesStr = localStorage.getItem(OFFLINE_CACHE_KEY);
+          const localUpdates = localUpdatesStr ? JSON.parse(localUpdatesStr) : {};
+          localUpdates[selectedPlate] = data.bazaars;
+          localStorage.setItem(OFFLINE_CACHE_KEY, JSON.stringify(localUpdates));
+        } catch (e) {
+          console.error('LocalStorage write error:', e);
+        }
+
+        showToast(`${cityName} pazar yerleri hal.gov.tr üzerinden başarıyla güncellendi (${data.bazaars.length} pazar).`, 'success');
       } else {
-        url.searchParams.delete('bazaar');
+        showToast(`${cityName} için yeni kayıt bulunamadı, mevcut çevrimdışı veriler kullanılıyor.`, 'info');
       }
-      window.history.replaceState({}, '', url.toString());
-    } catch {
-      // ignore
+    } catch (err) {
+      console.warn('Network update failed, remaining offline:', err);
+      showToast('Çevrimdışı moddasınız. Kayıtlı çevrimdışı pazar verileri kullanılmaya devam ediyor.', 'info');
+    } finally {
+      setIsUpdating(false);
     }
-  }, [detailBazaar]);
+  };
 
-  // Closest bazaar open today
-  const bazaarsOpenToday = useMemo(() => {
-    return enrichedBazaars
-      .filter((b) => b.isOpenToday)
-      .sort((a, b) => a.distanceKm - b.distanceKm);
-  }, [enrichedBazaars]);
+  // Filter bazaars belonging to selected province
+  const provinceBazaars = useMemo(() => {
+    return allBazaars.filter((b) => b.plate === selectedPlate);
+  }, [allBazaars, selectedPlate]);
 
-  const closestBazaarOpenToday = bazaarsOpenToday.length > 0 ? bazaarsOpenToday[0] : null;
-
-  // Filtered list for display
-  const displayBazaars = useMemo(() => {
-    return enrichedBazaars
-      .filter((b) => {
-        // Query search
-        if (searchQuery.trim()) {
-          const q = searchQuery.toLowerCase();
-          const matchesName = b.name.toLowerCase().includes(q);
-          const matchesDistrict = b.district.toLowerCase().includes(q);
-          const matchesFeatures =
-            (b.features.groceries && 'groceries produce vegetables'.includes(q)) ||
-            (b.features.textiles && 'textiles clothes fabrics'.includes(q)) ||
-            (b.features.food && 'food stalls kebabs tea'.includes(q));
-          if (!matchesName && !matchesDistrict && !matchesFeatures) return false;
-        }
-
-        // Feature filter chip
-        if (activeFilter === 'open_now') return b.isOpenNow;
-        if (activeFilter === 'groceries') return b.features.groceries;
-        if (activeFilter === 'textiles') return b.features.textiles;
-        if (activeFilter === 'food') return b.features.food;
-        if (activeFilter === 'parking') return b.parking.available;
-
-        return true;
-      })
-      .sort((a, b) => {
-        // Prioritize open today, then closest distance
-        if (a.isOpenToday && !b.isOpenToday) return -1;
-        if (!a.isOpenToday && b.isOpenToday) return 1;
-        return a.distanceKm - b.distanceKm;
-      });
-  }, [enrichedBazaars, activeFilter, searchQuery]);
-
-  // Handle Review Submission
-  const handleAddReview = (
-    bazaarId: string,
-    reviewData: {
-      author: string;
-      rating: number;
-      comment: string;
-      tags: string[];
-    }
-  ) => {
-    const newRev: Review = {
-      id: `rev-${Date.now()}`,
-      author: reviewData.author,
-      rating: reviewData.rating,
-      date: 'Just now',
-      comment: reviewData.comment,
-      tags: reviewData.tags,
-      helpfulCount: 0,
-    };
-
-    setBazaarsData((prev) => {
-      const updated = prev.map((b) => {
-        if (b.id !== bazaarId) return b;
-        const newReviews = [newRev, ...b.reviews];
-        const newAvg =
-          newReviews.reduce((sum, r) => sum + r.rating, 0) / newReviews.length;
-        return {
-          ...b,
-          reviews: newReviews,
-          rating: Math.round(newAvg * 10) / 10,
-          reviewCount: newReviews.length,
-        };
-      });
-
-      // Save to localStorage
-      try {
-        const stored = JSON.parse(
-          localStorage.getItem(REVIEWS_STORAGE_KEY) || '{}'
-        );
-        stored[bazaarId] = [newRev, ...(stored[bazaarId] || [])];
-        localStorage.setItem(REVIEWS_STORAGE_KEY, JSON.stringify(stored));
-      } catch (e) {
-        console.error('Failed to save review to storage', e);
+  // Extract unique districts for the selected province
+  const availableDistricts = useMemo(() => {
+    const districts = new Set<string>();
+    provinceBazaars.forEach((b) => {
+      if (b.district && b.district.trim()) {
+        districts.add(b.district.trim());
       }
-
-      return updated;
     });
+    return Array.from(districts).sort((a, b) => a.localeCompare(b, 'tr'));
+  }, [provinceBazaars]);
 
-    showToast(`Thanks ${reviewData.author}! Your review was published.`);
-  };
+  // Filter bazaars by district, day, search, type
+  const filteredBazaars = useMemo(() => {
+    return provinceBazaars.filter((bazaar) => {
+      // District filter
+      if (selectedDistrict !== 'all' && bazaar.district !== selectedDistrict) {
+        return false;
+      }
 
-  // Handle helpful vote click
-  const handleHelpfulClick = (bazaarId: string, reviewId: string) => {
-    setBazaarsData((prev) =>
-      prev.map((b) => {
-        if (b.id !== bazaarId) return b;
-        return {
-          ...b,
-          reviews: b.reviews.map((r) =>
-            r.id === reviewId
-              ? { ...r, helpfulCount: r.helpfulCount + 1 }
-              : r
-          ),
-        };
-      })
-    );
-    showToast('Marked review as helpful');
-  };
+      // Market Type filter
+      if (selectedType !== 'all') {
+        if (!bazaar.type || !bazaar.type.toLowerCase().includes(selectedType.toLowerCase())) {
+          return false;
+        }
+      }
 
-  const dayName = DAY_NAMES[selectedDate.getDay()];
+      // Day filter
+      if (selectedDayFilter === 'today') {
+        if (!bazaar.openDays.includes(todayIndex)) {
+          return false;
+        }
+      } else if (selectedDayFilter !== 'all') {
+        const targetDay = parseInt(selectedDayFilter, 10);
+        if (!bazaar.openDays.includes(targetDay)) {
+          return false;
+        }
+      }
+
+      // Search query filter (matches name, address, district, neighborhood, full day names, or abbreviations)
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const inName = bazaar.name.toLowerCase().includes(q);
+        const inAddress = bazaar.address.toLowerCase().includes(q);
+        const inDistrict = bazaar.district.toLowerCase().includes(q);
+        const inNeighborhood = bazaar.neighborhood ? bazaar.neighborhood.toLowerCase().includes(q) : false;
+        const dayNames = getBazaarDayNames(bazaar);
+        const inDayNames = dayNames.some((d) => d.toLowerCase().includes(q));
+        const inDaysRaw = bazaar.daysRaw ? bazaar.daysRaw.toLowerCase().includes(q) : false;
+        if (!inName && !inAddress && !inDistrict && !inNeighborhood && !inDayNames && !inDaysRaw) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [provinceBazaars, selectedDistrict, selectedType, selectedDayFilter, searchQuery, todayIndex]);
+
+  const currentProvinceInfo = TURKEY_PROVINCES.find((p) => p.plate === selectedPlate);
+  const totalInProvince = provinceBazaars.length;
+  const openTodayInProvince = provinceBazaars.filter((b) => b.openDays.includes(todayIndex)).length;
 
   return (
     <AndroidFrame>
-      {/* Android Top System Bar & App Bar */}
-      <AndroidHeader
-        userLocation={userLocation}
-        onOpenLocationPicker={() => setIsLocationPickerOpen(true)}
-        onRefreshLocation={() => requestDeviceGps(true)}
-        isLocating={isLocating}
-        selectedDate={selectedDate}
-        onDateChange={(d) => setSelectedDate(d)}
-        openCount={bazaarsOpenToday.length}
-        totalCount={enrichedBazaars.length}
-        activeFilter={activeFilter}
-        onFilterChange={setActiveFilter}
-      />
-
-      {/* Main Content Area */}
-      <main className="flex-1 px-4 py-4 space-y-4 pb-20">
-        {/* Search Bar & View Mode Toggle */}
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Search bazaar, district, food, textiles..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-slate-800/80 border border-slate-700/80 rounded-2xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-orange-500 transition-colors"
-            />
-          </div>
-
-          {/* Toggle between List and Map Radar */}
-          <div className="flex items-center bg-slate-800/80 p-1 rounded-2xl border border-slate-700/80">
-            <button
-              onClick={() => setActiveTab('list')}
-              className={`p-1.5 rounded-xl transition-all ${
-                activeTab === 'list'
-                  ? 'bg-orange-500 text-white shadow-xs'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-              title="List View"
-            >
-              <ListFilter className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setActiveTab('map')}
-              className={`p-1.5 rounded-xl transition-all ${
-                activeTab === 'map'
-                  ? 'bg-orange-500 text-white shadow-xs'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-              title="Map Radar View"
-            >
-              <MapIcon className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* Tab View Switch */}
-        {activeTab === 'map' ? (
-          <div className="space-y-3">
-            <InteractiveMap
-              bazaars={displayBazaars}
-              userLocation={userLocation}
-              closestBazaar={closestBazaarOpenToday}
-              onSelectBazaar={(b) => setDetailBazaar(b)}
-            />
-          </div>
-        ) : (
-          <>
-            {/* Featured Section: The Closest Bazaar Open Today */}
-            {!searchQuery && activeFilter === 'all' && closestBazaarOpenToday && (
-              <section className="space-y-2">
-                <ClosestBazaarHero
-                  bazaar={closestBazaarOpenToday}
-                  onSelect={(b) => setDetailBazaar(b)}
-                  onOpenReviews={(b) => {
-                    setDetailBazaar(b);
-                  }}
-                />
-              </section>
-            )}
-
-            {/* If no bazaar is open today */}
-            {bazaarsOpenToday.length === 0 && (
-              <div className="bg-slate-800/90 border border-amber-500/40 p-4 rounded-2xl text-center space-y-2">
-                <Clock className="w-8 h-8 text-amber-400 mx-auto" />
-                <h3 className="font-bold text-white text-sm">
-                  No Bazaars Scheduled on {dayName}
-                </h3>
-                <p className="text-xs text-slate-300">
-                  Weekly street markets typically run on specific days. Select
-                  another day on the top bar (such as Tuesday, Wednesday, Friday,
-                  or Saturday) or check daily covered bazaars!
+      <div className="flex flex-col min-h-full bg-slate-950 text-slate-100 font-sans pb-10">
+        {/* Top App Bar */}
+        <header className="sticky top-0 z-40 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-4 py-3 shadow-md">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-orange-500 flex items-center justify-center text-white shadow-md">
+                <Store className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <h1 className="text-base font-extrabold tracking-tight text-white leading-tight">
+                    Bazaar Finder
+                  </h1>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    Çevrimdışı
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  hal.gov.tr resmi semt pazarları kayıtları
                 </p>
               </div>
-            )}
+            </div>
 
-            {/* List of All Other Bazaars */}
-            <section className="space-y-3">
-              <div className="flex items-center justify-between text-xs font-bold text-slate-400 uppercase tracking-wider px-1 pt-1">
-                <span>
-                  {searchQuery || activeFilter !== 'all'
-                    ? `Matching Bazaars (${displayBazaars.length})`
-                    : `Nearby Bazaars (${displayBazaars.length})`}
-                </span>
-                <span className="text-[11px] text-orange-400 font-normal lowercase">
-                  sorted by distance from device
-                </span>
-              </div>
+            {/* Top Right Controls */}
+            <div className="flex items-center gap-1.5">
+              <PWAInstallButton />
+              
+              {/* Optional live update button */}
+              <button
+                type="button"
+                onClick={handleOptionalUpdate}
+                disabled={isUpdating}
+                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-all flex items-center gap-1 text-xs font-semibold disabled:opacity-50"
+                title="hal.gov.tr'den verileri isteğe bağlı güncelle"
+              >
+                <RefreshCw className={`w-4 h-4 text-orange-400 ${isUpdating ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline text-[11px]">Güncelle</span>
+              </button>
+            </div>
+          </div>
 
-              <div className="space-y-3">
-                {displayBazaars.map((bazaar) => {
-                  const isClosest = bazaar.id === closestBazaarOpenToday?.id;
-                  return (
-                    <BazaarCard
-                      key={bazaar.id}
-                      bazaar={bazaar}
-                      onSelect={(b) => setDetailBazaar(b)}
-                      onOpenReviews={(b) => setDetailBazaar(b)}
-                      isClosest={isClosest}
-                    />
-                  );
-                })}
+          {/* Primary View Switcher Tabs (Pazarlar / Alışveriş Listesi) */}
+          <div className="flex gap-1.5 mt-3 pt-2.5 border-t border-slate-800/80">
+            <button
+              type="button"
+              onClick={() => setActiveTab('bazaars')}
+              className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                activeTab === 'bazaars'
+                  ? 'bg-orange-500 text-white shadow-md'
+                  : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+              }`}
+            >
+              <Store className="w-4 h-4" />
+              <span>Semt Pazarları ({filteredBazaars.length})</span>
+            </button>
 
-                {displayBazaars.length === 0 && (
-                  <div className="bg-slate-800/50 rounded-2xl p-8 text-center text-slate-400 text-xs">
-                    No bazaars found matching your filter criteria.
-                  </div>
-                )}
-              </div>
-            </section>
-          </>
-        )}
-      </main>
+            <button
+              type="button"
+              onClick={() => setActiveTab('shopping')}
+              className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                activeTab === 'shopping'
+                  ? 'bg-orange-500 text-white shadow-md'
+                  : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+              }`}
+            >
+              <ShoppingBag className="w-4 h-4" />
+              <span>Alışveriş Listem</span>
+            </button>
+          </div>
+        </header>
 
-      {/* Floating Action Button (FAB) for Quick Map / Navigation View */}
-      <div className="fixed bottom-4 right-4 z-20 sm:hidden">
-        <button
-          onClick={() => setActiveTab(activeTab === 'list' ? 'map' : 'list')}
-          className="bg-orange-500 hover:bg-orange-600 active:scale-95 text-white font-bold p-3.5 rounded-full shadow-2xl flex items-center gap-1.5 border border-orange-400/30"
-        >
-          {activeTab === 'list' ? (
-            <>
-              <MapIcon className="w-5 h-5" />
-              <span className="text-xs pr-1">Radar Map</span>
-            </>
-          ) : (
-            <>
-              <ListFilter className="w-5 h-5" />
-              <span className="text-xs pr-1">List View</span>
-            </>
+        {/* Main Content Area */}
+        <main className="p-4 space-y-4 flex-1">
+          {/* TOAST MESSAGE */}
+          {toastMessage && (
+            <div
+              className={`p-3 rounded-xl text-xs font-semibold flex items-center justify-between gap-2 border shadow-lg animate-in slide-in-from-top duration-200 ${
+                toastMessage.type === 'success'
+                  ? 'bg-emerald-950/90 text-emerald-200 border-emerald-500/40'
+                  : toastMessage.type === 'error'
+                  ? 'bg-rose-950/90 text-rose-200 border-rose-500/40'
+                  : 'bg-slate-900 text-slate-200 border-slate-700'
+              }`}
+            >
+              <span>{toastMessage.text}</span>
+              <button
+                onClick={() => setToastMessage(null)}
+                className="text-slate-400 hover:text-white p-1"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
           )}
-        </button>
+
+          {/* TAB 1: BAZAARS LIST */}
+          {activeTab === 'bazaars' && (
+            <div className="space-y-3.5">
+              {/* Filter Card */}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3.5 space-y-3 shadow-sm">
+                {/* City & District Pickers */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {/* City (İl / Plaka) */}
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
+                      İl / Plaka Seçiniz (81 İl):
+                    </label>
+                    <select
+                      value={selectedPlate}
+                      onChange={(e) => setSelectedPlate(parseInt(e.target.value, 10))}
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-orange-500 text-white text-xs font-semibold rounded-xl px-3 py-2.5 outline-none transition-colors"
+                    >
+                      {TURKEY_PROVINCES.map((prov) => {
+                        const count = allBazaars.filter((b) => b.plate === prov.plate).length;
+                        return (
+                          <option key={prov.plate} value={prov.plate}>
+                            {prov.plate.toString().padStart(2, '0')} - {prov.displayName} ({count} Pazar)
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  {/* District (İlçe) */}
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
+                      İlçe Filtresi:
+                    </label>
+                    <select
+                      value={selectedDistrict}
+                      onChange={(e) => setSelectedDistrict(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-orange-500 text-white text-xs font-semibold rounded-xl px-3 py-2.5 outline-none transition-colors"
+                    >
+                      <option value="all">Tüm İlçeler ({totalInProvince})</option>
+                      {availableDistricts.map((dist) => {
+                        const distCount = provinceBazaars.filter((b) => b.district === dist).length;
+                        return (
+                          <option key={dist} value={dist}>
+                            {dist} ({distCount})
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Search Bar */}
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Pazar adı, mahalle veya cadde ara..."
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-orange-500 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-slate-500 outline-none transition-colors"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-1"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Day Filter Chips */}
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex items-center justify-between text-[11px] text-slate-400 font-semibold">
+                    <span className="flex items-center gap-1">
+                      <Calendar className="w-3 h-3 text-orange-400" />
+                      Kuruluş Günü Filtresi:
+                    </span>
+                    <span className="text-[10px] text-slate-500">Bugün: {todayName}</span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDayFilter('today')}
+                      className={`px-3 py-1.5 rounded-xl font-bold shrink-0 transition-all flex items-center gap-1.5 ${
+                        selectedDayFilter === 'today'
+                          ? 'bg-emerald-500 text-white shadow-sm'
+                          : 'bg-slate-950 text-slate-300 border border-slate-800 hover:text-white'
+                      }`}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                      Bugün Açık ({openTodayInProvince})
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDayFilter('all')}
+                      className={`px-3 py-1.5 rounded-xl font-semibold shrink-0 transition-all ${
+                        selectedDayFilter === 'all'
+                          ? 'bg-orange-500 text-white shadow-sm'
+                          : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-white'
+                      }`}
+                    >
+                      Tüm Günler ({totalInProvince})
+                    </button>
+
+                    {/* Monday to Sunday buttons */}
+                    {[1, 2, 3, 4, 5, 6, 0].map((d) => {
+                      const name = DAY_NAMES[d];
+                      const count = provinceBazaars.filter((b) => b.openDays.includes(d)).length;
+                      const isSelected = selectedDayFilter === d.toString();
+                      return (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => setSelectedDayFilter(d.toString())}
+                          className={`px-2.5 py-1.5 rounded-xl font-medium shrink-0 transition-all ${
+                            isSelected
+                              ? 'bg-orange-500 text-white font-bold'
+                              : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-slate-200'
+                          }`}
+                        >
+                          {name} ({count})
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Market Type Filter */}
+                <div className="flex items-center gap-1.5 pt-1 border-t border-slate-800 text-[11px]">
+                  <span className="text-slate-500 text-[10px] uppercase font-bold shrink-0">Tür:</span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedType('all')}
+                    className={`px-2 py-0.5 rounded-lg font-medium transition-all ${
+                      selectedType === 'all'
+                        ? 'bg-slate-800 text-white font-bold'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Tümü
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedType('Semt Pazarı')}
+                    className={`px-2 py-0.5 rounded-lg font-medium transition-all ${
+                      selectedType === 'Semt Pazarı'
+                        ? 'bg-slate-800 text-white font-bold'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Semt Pazarı
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedType('Üretici')}
+                    className={`px-2 py-0.5 rounded-lg font-medium transition-all ${
+                      selectedType === 'Üretici'
+                        ? 'bg-slate-800 text-white font-bold'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Üretici Pazarı
+                  </button>
+                </div>
+              </div>
+
+              {/* Status Header */}
+              <div className="flex items-center justify-between text-xs px-1 text-slate-400">
+                <span className="font-semibold text-white">
+                  {currentProvinceInfo?.displayName || 'İl'} &bull; {filteredBazaars.length} Pazar Listeleniyor
+                </span>
+                <span className="text-[11px] text-slate-500">
+                  {selectedDayFilter === 'today' ? `Bugün (${todayName}) Açık Olanlar` : 'Filtrelenmiş Liste'}
+                </span>
+              </div>
+
+              {/* Bazaars List */}
+              {filteredBazaars.length === 0 ? (
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-8 text-center space-y-2">
+                  <div className="w-10 h-10 mx-auto rounded-full bg-slate-800 flex items-center justify-center text-slate-500">
+                    <Store className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-sm font-bold text-white">Pazar Yeri Bulunamadı</h3>
+                  <p className="text-xs text-slate-400 max-w-xs mx-auto">
+                    Seçili filtre kriterlerine uygun pazar bulunamadı. Gün filtresini "Tüm Günler" olarak değiştirebilir veya arama terimini temizleyebilirsiniz.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedDayFilter('all');
+                      setSelectedDistrict('all');
+                      setSelectedType('all');
+                      setSearchQuery('');
+                    }}
+                    className="mt-2 text-xs font-bold text-orange-400 hover:text-orange-300 py-1 px-3 rounded-lg border border-orange-500/30"
+                  >
+                    Filtreleri Sıfırla
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {filteredBazaars.map((bazaar) => {
+                    const isOpenToday = bazaar.openDays.includes(todayIndex);
+                    return (
+                      <BazaarCard
+                        key={bazaar.id}
+                        bazaar={bazaar}
+                        onSelect={(bz) => setSelectedBazaar(bz)}
+                        isOpenToday={isOpenToday}
+                        todayIndex={todayIndex}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 2: SHOPPING TODO LIST */}
+          {activeTab === 'shopping' && (
+            <ShoppingTodoList />
+          )}
+        </main>
+
+        {/* Footer Info Notice */}
+        <footer className="mt-8 px-4 text-center text-[11px] text-slate-500 space-y-1">
+          <p>
+            Veri Kaynağı: T.C. Ticaret Bakanlığı Hal Kayıt Sistemi (HKS) &bull; hal.gov.tr
+          </p>
+          <p>
+            Tüm pazar listesi ve alışveriş maddeleri çevrimdışı yerel hafızanızda çalışır.
+          </p>
+        </footer>
+
+        {/* Bazaar Detail Modal */}
+        {selectedBazaar && (
+          <BazaarDetailModal
+            bazaar={selectedBazaar}
+            onClose={() => setSelectedBazaar(null)}
+            isOpenToday={selectedBazaar.openDays.includes(todayIndex)}
+            todayIndex={todayIndex}
+            onOpenShoppingList={() => {
+              setActiveTab('shopping');
+            }}
+          />
+        )}
       </div>
-
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-800 border border-orange-500/50 text-white text-xs px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-          <span>{toastMessage}</span>
-        </div>
-      )}
-
-      {/* Modals */}
-      <BazaarDetailModal
-        bazaar={detailBazaar}
-        onClose={() => setDetailBazaar(null)}
-        onWriteReview={(b) => setReviewBazaar(b)}
-        onHelpfulClick={handleHelpfulClick}
-        selectedDate={selectedDate}
-      />
-
-      <AddReviewModal
-        bazaar={reviewBazaar}
-        onClose={() => setReviewBazaar(null)}
-        onSubmitReview={handleAddReview}
-      />
-
-      <LocationPickerModal
-        currentLocation={userLocation}
-        isOpen={isLocationPickerOpen}
-        onClose={() => setIsLocationPickerOpen(false)}
-        onSelectLocation={(loc) => {
-          setUserLocation(loc);
-          showToast(`Set device location to ${loc.name}`);
-        }}
-        onUseGps={() => {
-          requestDeviceGps(true);
-          setIsLocationPickerOpen(false);
-        }}
-        isLocating={isLocating}
-        locationError={locationError}
-      />
     </AndroidFrame>
   );
 }
